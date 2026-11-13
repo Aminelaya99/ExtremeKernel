@@ -27,7 +27,7 @@ jobs:
       - name: Update submodules
         run: |
           git submodule update --init --recursive
-          git submodule update --remote
+          git -C KernelSU-Next log -1 --format='KernelSU-Next %H %s'   # keep pinned v1.0.9: --remote pulls dev, which needs KPROBES and silently drops CONFIG_KSU
       - name: Build for d1xks (sixteen, clang r547379)
         run: |
           git log -1 --format='%H %s'
