@@ -28,6 +28,8 @@ jobs:
         run: |
           git submodule update --init --recursive
           git -C KernelSU-Next log -1 --format='KernelSU-Next %H %s'   # keep pinned v1.0.9: --remote pulls dev, which needs KPROBES and silently drops CONFIG_KSU
+          git -C KernelSU-Next fetch --unshallow --tags   # KSU_VERSION = 10000 + rev-list count + 200; shallow clone gave 10201 instead of 12797
+          echo "KernelSU-Next commits: $(git -C KernelSU-Next rev-list --count HEAD)"
       - name: Build for d1xks (sixteen, clang r547379)
         run: |
           git log -1 --format='%H %s'
