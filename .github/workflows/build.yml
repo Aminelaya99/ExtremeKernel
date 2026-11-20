@@ -30,6 +30,60 @@ jobs:
           git -C KernelSU-Next log -1 --format='KernelSU-Next %H %s'   # keep pinned v1.0.9: --remote pulls dev, which needs KPROBES and silently drops CONFIG_KSU
           git -C KernelSU-Next fetch --unshallow --tags   # KSU_VERSION = 10000 + rev-list count + 200; shallow clone gave 10201 instead of 12797
           echo "KernelSU-Next commits: $(git -C KernelSU-Next rev-list --count HEAD)"
+      - name: Backport capabilities 38-40 (Android 17 native app zygote)
+        run: |
+          python3 - <<'PY'
+          #!/usr/bin/env python3
+          """Backport CAP_PERFMON (38), CAP_BPF (39), CAP_CHECKPOINT_RESTORE (40) definitions to a 4.14 kernel.
+
+          Android 17's native app zygote (/system/bin/zygote_next) reads the bounding set for every
+          capability up to 40. Kernels older than 5.9 answer EINVAL for 38-40, the zygote child panics,
+          system_server waits on the dead app-zygote socket and the watchdog restarts the system
+          (seen on Note10 d1xks when Chrome starts its renderers).
+
+          The kernel only needs to know the numbers: nothing in 4.14 checks these capabilities, so this
+          grants no new power. Idempotent; exits non-zero if the expected lines are not found.
+          Usage: python3 patch_caps.py [kernel_root]
+          """
+          import os
+          import re
+          import sys
+
+          root = sys.argv[1] if len(sys.argv) > 1 else "."
+
+          cap_h = os.path.join(root, "include/uapi/linux/capability.h")
+          s = open(cap_h).read()
+          if "CAP_CHECKPOINT_RESTORE" not in s:
+              old = re.search(r"#define CAP_LAST_CAP\s+CAP_AUDIT_READ", s)
+              if not old:
+                  sys.exit("capability.h: CAP_LAST_CAP CAP_AUDIT_READ line not found")
+              new = ("#define CAP_PERFMON\t\t38\n\n"
+                     "#define CAP_BPF\t\t\t39\n\n"
+                     "#define CAP_CHECKPOINT_RESTORE\t40\n\n"
+                     "#define CAP_LAST_CAP         CAP_CHECKPOINT_RESTORE")
+              s = s[:old.start()] + new + s[old.end():]
+              open(cap_h, "w").write(s)
+              print("patched", cap_h)
+          else:
+              print("already patched", cap_h)
+
+          cm_h = os.path.join(root, "security/selinux/include/classmap.h")
+          s = open(cm_h).read()
+          if '"perfmon"' not in s:
+              s2, n = re.subn(r'(#define COMMON_CAP2_PERMS[^\n]*\\\n[^\n]*"audit_read")',
+                              r'\1, \\\n\t\t"perfmon", "bpf", "checkpoint_restore"', s, count=1)
+              if n != 1:
+                  sys.exit("classmap.h: COMMON_CAP2_PERMS block not found")
+              s3 = s2.replace("#if CAP_LAST_CAP > CAP_AUDIT_READ", "#if CAP_LAST_CAP > CAP_CHECKPOINT_RESTORE")
+              if s3 == s2:
+                  sys.exit("classmap.h: CAP_LAST_CAP guard not found")
+              open(cm_h, "w").write(s3)
+              print("patched", cm_h)
+          else:
+              print("already patched", cm_h)
+          PY
+          grep -n 'CAP_PERFMON\|CAP_BPF\|CAP_CHECKPOINT_RESTORE\|define CAP_LAST_CAP' include/uapi/linux/capability.h
+          grep -n -A2 'define COMMON_CAP2_PERMS' security/selinux/include/classmap.h
       - name: Build for d1xks (sixteen, clang r547379)
         run: |
           git log -1 --format='%H %s'
